@@ -20,16 +20,27 @@ A small, keyboard-friendly calculator for Linux built with C++ and Qt 6, themed 
 - Qt 6 (Widgets)
 - A C++17 compiler
 
+## Installation
+
+Install system-wide (installs the binary, desktop entry, and icon to `/usr`):
+
+```sh
+./step.sh
+```
+
+The script shows a menu — pick **1** to install, **2** to uninstall, **3** for help,
+**4** to exit. Install requires `sudo`; it configures, builds, installs to `/usr`, and
+refreshes the desktop-database and icon caches.
+
+Uninstalling removes every file recorded in the install manifest and refreshes the caches.
+
 ## Building
+
+Run it locally without installing:
 
 ```sh
 cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
 cmake --build build-release -j"$(nproc)"
-```
-
-Run it:
-
-```sh
 ./build-release/raqim
 ```
 

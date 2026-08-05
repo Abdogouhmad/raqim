@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Raqim
+GenericName=Calculator
+Comment=A simple calculator themed to match your Noctalia colors
+Exec=raqim
+Icon=raqim
+Terminal=false
+Categories=Utility;Calculator;Qt;
+StartupWMClass=raqim
