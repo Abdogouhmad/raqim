@@ -20,5 +20,39 @@ qt_add_executable(raqim
 )
 
 target_compile_definitions(raqim PRIVATE APP_VERSION="${PROJECT_VERSION}")
-
 target_link_libraries(raqim PRIVATE Qt6::Widgets)
+
+# --- Installation -----------------------------------------------------------
+# GNUInstallDirs gives us the standard, distro-correct destinations
+# (CMAKE_INSTALL_BINDIR -> bin, CMAKE_INSTALL_DATADIR -> share, etc.)
+# instead of hardcoding "usr/bin" and friends ourselves.
+include(GNUInstallDirs)
+
+install(TARGETS raqim
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+
+install(FILES packaging/raqim.desktop
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/applications
+)
+
+install(FILES packaging/raqim.svg
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps
+)
+
+# --- Uninstall target --------------------------------------------------------
+# CMake has no built-in "uninstall" — this configures a script from the
+# install_manifest.txt that `cmake --install` generates, then exposes it
+# as a normal build target: `ninja uninstall` / `make uninstall`.
+if(NOT TARGET uninstall)
+    configure_file(
+        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/cmake_uninstall.cmake.in"
+        "${CMAKE_CURRENT_BINARY_DIR}/cmake_uninstall.cmake"
+        @ONLY
+    )
+
+    add_custom_target(uninstall
+        COMMAND ${CMAKE_COMMAND} -P "${CMAKE_CURRENT_BINARY_DIR}/cmake_uninstall.cmake"
+        COMMENT "Uninstalling raqim"
+    )
+endif()
