@@ -1,0 +1,19 @@
+CompileFlags:
+  CompilationDatabase: build
+  Add:
+    - "-Wall"
+    - "-Wextra"
+
+Diagnostics:
+  ClangTidy:
+    Add:
+      - bugprone-*
+      - performance-*
+
+InlayHints:
+  Enabled: Yes
+  ParameterNames: Yes
+  DeducedTypes: Yes
+
+Index:
+  Background: Build
