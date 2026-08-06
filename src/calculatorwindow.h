@@ -3,7 +3,6 @@
 #include <QString>
 #include <QWidget>
 
-class QKeyEvent;
 class QLineEdit;
 class QPushButton;
 
@@ -11,20 +10,18 @@ class CalculatorWindow : public QWidget {
     Q_OBJECT
 
   public:
-    enum class Operation {
-        None,
-        Add,
-        Subtract,
-        Multiply,
-        Divide,
-    };
-
     explicit CalculatorWindow(QWidget* parent = nullptr);
 
   protected:
     void keyPressEvent(QKeyEvent* event) override;
 
-  private slots:
+  private:
+    enum class Operation { Add, Subtract, Multiply, Divide };
+
+    void buildUi();
+    void connectDigitButton(QPushButton* button, int digit);
+    void connectOperatorButton(QPushButton* button, Operation op);
+
     void onDigitPressed(int digit);
     void onDecimalPressed();
     void onOperatorPressed(Operation op);
@@ -34,17 +31,16 @@ class CalculatorWindow : public QWidget {
     void onPercentPressed();
     void onBackspacePressed();
 
-  private:
-    void buildUi();
-    void connectDigitButton(QPushButton* button, int digit);
-    void connectOperatorButton(QPushButton* button, Operation op);
-    double currentValue() const;
-    double applyPendingOperation(double lhs, double rhs, Operation op) const;
+    static QChar operatorChar(Operation op);
     void updateDisplay();
 
     QLineEdit* m_display = nullptr;
-    QString m_entryText = "0";
-    double m_accumulator = 0.0;
-    Operation m_pendingOp = Operation::None;
-    bool m_awaitingNewValue = true;
+
+    // The whole expression as typed so far, e.g. "12+7*3". Stored with
+    // plain ASCII operators (+  -  *  /); prettified to +  −  ×  ÷ only
+    // when shown on screen. Starts at "0" the way a fresh calculator does.
+    QString m_expression = "0";
+
+    bool m_justEvaluated = false; // true right after '=' — next digit starts fresh
+    bool m_hasError = false;      // true after a divide-by-zero / bad expression
 };

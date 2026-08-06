@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-08-06
+
+### Added
+
+- Live expression display: the full equation stays visible as you type
+  (`10+10`, `1000+10%`) instead of only the running result.
+- `%` as an inline postfix operator with classic calculator behaviour:
+  `1000+10%` evaluates to `1100` (10% of the preceding value), `200−50%` to
+  `100`, and a leading `50%` to `0.5`. Inside `*` and `/` it means `/100`
+  (`1000*10%` → `100`).
+- A rewritten expression parser with proper operator precedence (`*` and `/`
+  bind tighter than `+` and `-`) and unary minus support.
+- Keyboard support for `%` (`Shift+5` / keypad).
+
+### Changed
+
+- Window now uses a fixed 400×600 size.
+- Window title no longer embeds the version string.
+
+### Fixed
+
+- Pressing `%` corrupted the inline math display; the symbol now renders
+  inline and computes correctly.
+- Typing a digit right after a `%`-marked number starts a fresh number
+  instead of producing a malformed expression.
+
 ## [1.0.0] - 2026-08-05
 
 ### Added

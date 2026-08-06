@@ -3,6 +3,8 @@
 A small, keyboard-friendly calculator for Linux built with C++ and Qt 6, themed live by
 [Noctalia](https://github.com/Abdogouhmad/noctalia).
 
+![raqim preview](assets/preview.png)
+
 ## Features
 
 - Standard 16-key layout: digits, `.`, `+/-`, `%`, `⌫`, `C`, `=`

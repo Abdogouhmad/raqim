@@ -17,8 +17,9 @@ int main(int argc, char* argv[]) {
     themeManager.applyToApplication();
 
     CalculatorWindow window;
-    window.setMinimumSize(240, 340);
-    window.resize(320, 460);
+    window.setFixedSize(400, 600); // exact size
+    // window.setMinimumSize(240, 340);
+    // window.resize(320, 460);
     window.show();
 
     return app.exec();

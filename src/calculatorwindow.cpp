@@ -7,14 +7,160 @@
 #include <QPushButton>
 #include <QSizePolicy>
 #include <QVBoxLayout>
-#include <limits>
+#include <cmath>
 
 namespace {
 constexpr int kButtonMinSize = 56;
+
+bool isOperatorChar(QChar c) { return c == '+' || c == '-' || c == '*' || c == '/'; }
+
+// Finds where the "current" (rightmost) number segment begins in an
+// expression string — i.e. the index right after the last real binary
+// operator. A '-' that immediately follows another operator is a unary
+// sign for that segment (from the +/- button), not a binary operator
+// itself, so it's skipped rather than treated as a split point.
+// Example: "12+-5" -> real operator is '+' at index 2, so this returns 3,
+// giving a segment of "-5" (the unary minus stays part of the segment).
+int currentSegmentStart(const QString& expression) {
+    for (int i = expression.length() - 1; i > 0; --i) {
+        const QChar c = expression.at(i);
+        if (!isOperatorChar(c))
+            continue;
+        if (c == '-' && isOperatorChar(expression.at(i - 1)))
+            continue; // unary, keep scanning left
+        return i + 1;
+    }
+    return 0;
 }
 
+// A small recursive-descent parser for the four basic operators with
+// standard precedence (* and / bind tighter than + and -), a leading unary
+// minus per factor, and postfix '%'. No parentheses — the UI never offers
+// them.
+//
+//   expression := term (('+' | '-') term)*
+//   term       := factor (('*' | '/') factor)*
+//   factor     := ['-'] number '%'*
+//
+// '%' follows classic calculator behaviour:
+//   - "a + b%" and "a - b%" -> b% is a percentage of a ("1000+10%" = 1100)
+//   - "a * b%" and "a / b%" -> b% is b/100
+//   - a leading "b%"        -> b/100
+class ExpressionParser {
+  public:
+    explicit ExpressionParser(const QString& text) : m_text(text) {}
+
+    double parse(bool* ok) {
+        *ok = true;
+        const double result = parseExpression(ok);
+        if (*ok && !atEnd())
+            *ok = false; // leftover characters -> malformed input
+        return result;
+    }
+
+  private:
+    double parseExpression(bool* ok) {
+        double result = parseTerm(ok);
+        if (*ok && m_lastTermWasPercent)
+            result /= 100.0; // leading "50%" -> 0.5, there is no base yet
+        while (*ok && !atEnd() && (peek() == '+' || peek() == '-')) {
+            const QChar op = peek();
+            advance();
+            double rhs = parseTerm(ok);
+            const bool rhsWasPercent = m_lastTermWasPercent;
+            if (!*ok)
+                return 0.0;
+            if (rhsWasPercent)
+                rhs = result * rhs / 100.0; // "a + b%" -> b% of a
+            result = (op == '+') ? result + rhs : result - rhs;
+        }
+        return result;
+    }
+
+    double parseTerm(bool* ok) {
+        double result = parseFactor(ok);
+        bool lhsIsPercent = m_factorIsPercent;
+        bool termIsPercent = lhsIsPercent;
+        while (*ok && !atEnd() && (peek() == '*' || peek() == '/')) {
+            const QChar op = peek();
+            advance();
+            double rhs = parseFactor(ok);
+            const bool rhsIsPercent = m_factorIsPercent;
+            if (!*ok)
+                return 0.0;
+            if (rhsIsPercent)
+                rhs /= 100.0; // within * and /, % always means /100
+            if (lhsIsPercent)
+                result /= 100.0; // "100% * 2" -> 1 * 2
+            if (op == '/') {
+                if (rhs == 0.0) {
+                    *ok = false;
+                    return 0.0;
+                }
+                result /= rhs;
+            } else {
+                result *= rhs;
+            }
+            lhsIsPercent = false;
+            termIsPercent = false;
+        }
+        m_lastTermWasPercent = termIsPercent;
+        return result;
+    }
+
+    double parseFactor(bool* ok) {
+        bool negative = false;
+        if (!atEnd() && peek() == '-') {
+            negative = true;
+            advance();
+        }
+        double value = parseNumber(ok);
+        m_factorIsPercent = false;
+        if (*ok) {
+            while (!atEnd() && peek() == '%') {
+                advance();
+                if (m_factorIsPercent)
+                    value /= 100.0; // "10%%" -> 0.1 / 100
+                m_factorIsPercent = true;
+            }
+        }
+        return negative ? -value : value;
+    }
+
+    double parseNumber(bool* ok) {
+        const int start = m_pos;
+        while (!atEnd() && (peek().isDigit() || peek() == '.'))
+            advance();
+        if (m_pos == start) {
+            *ok = false;
+            return 0.0;
+        }
+        bool convOk = false;
+        const double value = m_text.mid(start, m_pos - start).toDouble(&convOk);
+        if (!convOk)
+            *ok = false;
+        return value;
+    }
+
+    bool atEnd() const { return m_pos >= m_text.length(); }
+    QChar peek() const { return m_text.at(m_pos); }
+    void advance() { ++m_pos; }
+
+    QString m_text;
+    int m_pos = 0;
+    bool m_lastTermWasPercent = false; // did the most recent term end in '%'?
+    bool m_factorIsPercent = false;    // does the most recent factor carry '%'?
+};
+
+double evaluateExpression(const QString& expression, bool* ok) {
+    ExpressionParser parser(expression);
+    return parser.parse(ok);
+}
+
+} // namespace
+
 CalculatorWindow::CalculatorWindow(QWidget* parent) : QWidget(parent) {
-    setWindowTitle("Calculator " APP_VERSION);
+    setWindowTitle("Calculator");
     buildUi();
     updateDisplay();
 }
@@ -141,107 +287,214 @@ void CalculatorWindow::connectOperatorButton(QPushButton* button, Operation op) 
     connect(button, &QPushButton::clicked, this, [this, op] { onOperatorPressed(op); });
 }
 
-void CalculatorWindow::onDigitPressed(int digit) {
-    if (m_awaitingNewValue) {
-        m_entryText = QString::number(digit);
-        m_awaitingNewValue = false;
-    } else if (m_entryText == "0") {
-        m_entryText = QString::number(digit);
-    } else {
-        m_entryText += QString::number(digit);
+QChar CalculatorWindow::operatorChar(Operation op) {
+    switch (op) {
+    case Operation::Add:
+        return '+';
+    case Operation::Subtract:
+        return '-';
+    case Operation::Multiply:
+        return '*';
+    case Operation::Divide:
+        return '/';
     }
+    return '+';
+}
+
+void CalculatorWindow::onDigitPressed(int digit) {
+    if (m_hasError || m_justEvaluated) {
+        m_expression = QString::number(digit);
+        m_hasError = false;
+        m_justEvaluated = false;
+        updateDisplay();
+        return;
+    }
+
+    const QString seg = m_expression.mid(currentSegmentStart(m_expression));
+    if (seg.endsWith('%')) {
+        m_expression.chop(seg.length()); // a %-locked number is done; a digit restarts it
+    } else if (seg == "0" || seg == "-0") {
+        // Replace just the trailing zero, keeping a leading '-' if present.
+        m_expression.chop(1);
+    }
+    m_expression += QString::number(digit);
     updateDisplay();
 }
 
 void CalculatorWindow::onDecimalPressed() {
-    if (m_awaitingNewValue) {
-        m_entryText = "0.";
-        m_awaitingNewValue = false;
-    } else if (!m_entryText.contains('.')) {
-        m_entryText += '.';
+    if (m_hasError || m_justEvaluated) {
+        m_expression = "0.";
+        m_hasError = false;
+        m_justEvaluated = false;
+        updateDisplay();
+        return;
+    }
+
+    const QString seg = m_expression.mid(currentSegmentStart(m_expression));
+    if (seg.endsWith('%')) {
+        m_expression.chop(seg.length());
+        m_expression += "0.";
+    } else if (seg.isEmpty() || seg == "-") {
+        m_expression += "0.";
+    } else if (!seg.contains('.')) {
+        m_expression += '.';
     }
     updateDisplay();
 }
 
 void CalculatorWindow::onOperatorPressed(Operation op) {
-    if (m_pendingOp != Operation::None && !m_awaitingNewValue) {
-        m_accumulator = applyPendingOperation(m_accumulator, currentValue(), m_pendingOp);
-    } else {
-        m_accumulator = currentValue();
+    if (m_hasError)
+        onClearPressed();
+    m_justEvaluated = false;
+
+    const QChar opChar = operatorChar(op);
+
+    // Special-case starting a negative number from a totally fresh state.
+    if ((m_expression == "0" || m_expression == "0%") && opChar == '-') {
+        m_expression = "-";
+        updateDisplay();
+        return;
     }
-    m_pendingOp = op;
-    m_awaitingNewValue = true;
-    m_entryText = QString::number(m_accumulator, 'g', 15);
+
+    const int segStart = currentSegmentStart(m_expression);
+    const QString seg = m_expression.mid(segStart);
+
+    if (seg.isEmpty()) {
+        // Right after an operator, nothing typed yet for the next number.
+        if (opChar == '-') {
+            // Toggle a pending unary minus for the number about to be typed.
+            if (!m_expression.isEmpty() && m_expression.back() == '-') {
+                m_expression.chop(1);
+            } else {
+                m_expression += '-';
+            }
+        } else if (!m_expression.isEmpty()) {
+            // Swap the trailing operator instead of stacking a second one.
+            if (m_expression.back() == '-' && m_expression.size() >= 2 &&
+                isOperatorChar(m_expression.at(m_expression.size() - 2))) {
+                m_expression.chop(2); // drop operator + its pending unary minus
+            } else {
+                m_expression.chop(1);
+            }
+            m_expression += opChar;
+        }
+    } else if (seg == "-") {
+        // A lone unary minus with nothing typed after it yet.
+        m_expression.chop(1);
+        if (opChar != '-')
+            m_expression += opChar;
+    } else {
+        m_expression += opChar;
+    }
     updateDisplay();
 }
 
 void CalculatorWindow::onEqualsPressed() {
-    if (m_pendingOp == Operation::None)
+    if (m_hasError || m_justEvaluated)
         return;
-    const double result = applyPendingOperation(m_accumulator, currentValue(), m_pendingOp);
-    m_pendingOp = Operation::None;
-    m_awaitingNewValue = true;
-    m_entryText = QString::number(result, 'g', 15);
+
+    QString expr = m_expression;
+    while (!expr.isEmpty() && isOperatorChar(expr.back()))
+        expr.chop(1); // drop a trailing incomplete operator
+    if (expr.isEmpty())
+        return;
+
+    bool ok = false;
+    const double result = evaluateExpression(expr, &ok);
+
+    if (!ok || std::isnan(result) || std::isinf(result)) {
+        m_hasError = true;
+        m_display->setText("Error");
+        return;
+    }
+
+    m_expression = QString::number(result, 'g', 15);
+    m_justEvaluated = true;
     updateDisplay();
 }
 
 void CalculatorWindow::onClearPressed() {
-    m_accumulator = 0.0;
-    m_entryText = "0";
-    m_pendingOp = Operation::None;
-    m_awaitingNewValue = true;
+    m_expression = "0";
+    m_justEvaluated = false;
+    m_hasError = false;
     updateDisplay();
 }
 
 void CalculatorWindow::onSignTogglePressed() {
-    if (m_entryText.startsWith('-')) {
-        m_entryText.remove(0, 1);
-    } else if (m_entryText != "0") {
-        m_entryText.prepend('-');
+    if (m_hasError)
+        return;
+
+    if (m_justEvaluated) {
+        if (m_expression.startsWith('-')) {
+            m_expression.remove(0, 1);
+        } else if (m_expression != "0") {
+            m_expression.prepend('-');
+        }
+        updateDisplay();
+        return;
+    }
+
+    const int segStart = currentSegmentStart(m_expression);
+    const QString seg = m_expression.mid(segStart);
+    if (seg.isEmpty()) {
+        m_expression += '-'; // pre-negate the number about to be typed
+    } else if (seg.startsWith('-')) {
+        m_expression.remove(segStart, 1);
+    } else {
+        m_expression.insert(segStart, '-');
     }
     updateDisplay();
 }
 
 void CalculatorWindow::onPercentPressed() {
-    m_entryText = QString::number(currentValue() / 100.0, 'g', 15);
+    if (m_hasError)
+        return;
+
+    if (m_justEvaluated) {
+        m_expression = QString::number(m_expression.toDouble() / 100.0, 'g', 15);
+        m_justEvaluated = false;
+        updateDisplay();
+        return;
+    }
+
+    // Keep the '%' visible inline in the expression ("1000+10%"); the parser
+    // turns it into "10% of 1000" when '=' is pressed. Pressing '%' again on
+    // the same number toggles it back off.
+    const int segStart = currentSegmentStart(m_expression);
+    const QString seg = m_expression.mid(segStart);
+    if (seg.isEmpty() || seg == "-")
+        return; // nothing typed yet to mark as a percentage
+
+    if (seg.endsWith('%')) {
+        m_expression.chop(1);
+    } else {
+        m_expression += '%';
+    }
     updateDisplay();
 }
 
 void CalculatorWindow::onBackspacePressed() {
-    if (m_awaitingNewValue)
+    if (m_hasError || m_justEvaluated) {
+        onClearPressed();
         return;
-    m_entryText.chop(1);
-    if (m_entryText.isEmpty() || m_entryText == "-") {
-        m_entryText = "0";
-        m_awaitingNewValue = true;
     }
+    if (!m_expression.isEmpty())
+        m_expression.chop(1);
+    if (m_expression.isEmpty())
+        m_expression = "0";
     updateDisplay();
 }
 
-double CalculatorWindow::currentValue() const { return m_entryText.toDouble(); }
-
-double CalculatorWindow::applyPendingOperation(double lhs, double rhs, Operation op) const {
-    switch (op) {
-    case Operation::Add:
-        return lhs + rhs;
-    case Operation::Subtract:
-        return lhs - rhs;
-    case Operation::Multiply:
-        return lhs * rhs;
-    case Operation::Divide:
-        return rhs != 0.0 ? lhs / rhs : std::numeric_limits<double>::quiet_NaN();
-    case Operation::None:
-        return rhs;
-    }
-    return rhs;
-}
-
 void CalculatorWindow::updateDisplay() {
-    if (m_entryText == "nan" || m_entryText == "-nan") {
+    if (m_hasError) {
         m_display->setText("Error");
         return;
     }
-    m_display->setText(m_entryText);
+    QString pretty = m_expression;
+    pretty.replace('*', QChar(0x00D7)); // ×
+    pretty.replace('/', QChar(0x00F7)); // ÷
+    pretty.replace('-', QChar(0x2212)); // − (proper minus sign, not hyphen)
+    m_display->setText(pretty.isEmpty() ? "0" : pretty);
 }
 
 void CalculatorWindow::keyPressEvent(QKeyEvent* event) {
@@ -266,6 +519,9 @@ void CalculatorWindow::keyPressEvent(QKeyEvent* event) {
     case Qt::Key_Period:
     case Qt::Key_Comma:
         onDecimalPressed();
+        return;
+    case Qt::Key_Percent:
+        onPercentPressed();
         return;
     case Qt::Key_Enter:
     case Qt::Key_Return:
